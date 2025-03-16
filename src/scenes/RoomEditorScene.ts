@@ -176,13 +176,38 @@ class RoomEditorScene extends Phaser.Scene {
             
             // Place all saved items
             config.items.forEach(item => {
+                // First, find the category for this item
+                let foundCategory: ItemCategory | undefined;
+                for (const category of this.categories) {
+                    // Check both with and without .png extension
+                    if (category.items.some(i => 
+                        i.name === item.name || 
+                        i.name === `${item.name}.png` || 
+                        i.name.replace('.png', '') === item.name
+                    )) {
+                        foundCategory = category;
+                        break;
+                    }
+                }
+                
+                if (!foundCategory) {
+                    console.error(`Could not find category for item: ${item.name}`);
+                    return;
+                }
+                
+                // Create the sprite
+                const itemInfo = foundCategory.items.find(i => 
+                    i.name === item.name || 
+                    i.name === `${item.name}.png` || 
+                    i.name.replace('.png', '') === item.name
+                );
                 const sprite = this.add.sprite(item.x, item.y, item.name.replace('.png', ''))
-                    .setScale(item.scaleX, item.scaleY)
-                    .setInteractive({ draggable: true });
-
-                // Add the same drag handlers as in createCatalog
-                this.setupPlacedItemHandlers(sprite, item.name);
-
+                    .setScale(item.scaleX, item.scaleY);
+                
+                // Make the sprite draggable
+                sprite.setInteractive({ draggable: true, useHandCursor: true });
+                
+                // Add the sprite to placed items
                 this.placedItems.push({
                     sprite,
                     name: item.name,
@@ -191,13 +216,102 @@ class RoomEditorScene extends Phaser.Scene {
                     scaleX: item.scaleX,
                     scaleY: item.scaleY
                 });
+                
+                // Add drag handlers
+                sprite.on('dragstart', () => {
+                    console.log('Drag started', item.name);
+                    sprite.setDepth(100);
+                });
+                
+                sprite.on('drag', (pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
+                    sprite.x = dragX;
+                    sprite.y = dragY;
+                    
+                    // Check if in valid zone
+                    const isValid = this.isPointInZone(dragX, dragY, foundCategory.zone, itemInfo?.naturalWall);
+                    sprite.setAlpha(isValid ? 1 : 0.4);
+                    sprite.setTint(isValid ? 0xffffff : 0xff0000);
+                    
+                    // Handle mirroring for wall items
+                    if (foundCategory.zone === 'wall' && itemInfo?.naturalWall) {
+                        const currentWallZone = this.getCurrentWallZone(dragX, dragY);
+                        if (currentWallZone && currentWallZone.side !== itemInfo.naturalWall) {
+                            sprite.setScale(-0.8, 0.8);
+                        } else {
+                            sprite.setScale(0.8);
+                        }
+                    }
+                    
+                    // Update stored position
+                    const itemData = this.placedItems.find(i => i.sprite === sprite);
+                    if (itemData) {
+                        itemData.x = dragX;
+                        itemData.y = dragY;
+                        itemData.scaleX = sprite.scaleX;
+                        itemData.scaleY = sprite.scaleY;
+                    }
+                });
+                
+                sprite.on('dragend', (pointer: Phaser.Input.Pointer) => {
+                    console.log('Drag ended', item.name);
+                    
+                    const isValid = this.isPointInZone(sprite.x, sprite.y, foundCategory.zone, itemInfo?.naturalWall);
+                    const isInCatalog = sprite.x > this.cameras.main.width - 300 && this.catalogContainer.x < this.cameras.main.width;
+                    
+                    if (isValid && !isInCatalog) {
+                        // Snap to grid
+                        sprite.x = Math.round(sprite.x / 32) * 32;
+                        sprite.y = Math.round(sprite.y / 32) * 32;
+                        sprite.setAlpha(1);
+                        sprite.clearTint();
+                        sprite.setDepth(1);
+                        
+                        // Update stored position
+                        const itemData = this.placedItems.find(i => i.sprite === sprite);
+                        if (itemData) {
+                            itemData.x = sprite.x;
+                            itemData.y = sprite.y;
+                            itemData.scaleX = sprite.scaleX;
+                            itemData.scaleY = sprite.scaleY;
+                        }
+                    } else {
+                        // Remove invalid item
+                        const index = this.placedItems.findIndex(i => i.sprite === sprite);
+                        if (index !== -1) {
+                            this.placedItems.splice(index, 1);
+                        }
+                        sprite.destroy();
+                        
+                        // Show error message
+                        const errorText = this.add.text(sprite.x, sprite.y - 20, 
+                            `Can only place on ${foundCategory.zone}!`, 
+                            { fontSize: '16px', color: '#ff0000' });
+                        
+                        this.tweens.add({
+                            targets: errorText,
+                            alpha: 0,
+                            y: errorText.y - 50,
+                            duration: 1500,
+                            onComplete: () => errorText.destroy()
+                        });
+                    }
+                });
+                
+                // Add right-click to remove
+                sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+                    if (pointer.rightButtonDown()) {
+                        const index = this.placedItems.findIndex(i => i.sprite === sprite);
+                        if (index !== -1) {
+                            this.placedItems.splice(index, 1);
+                        }
+                        sprite.destroy();
+                    }
+                });
             });
         } else {
             this.background = this.add.image(this.cameras.main.centerX, this.cameras.main.centerY, this.currentRoom)
                 .setOrigin(0.5);
         }
-
-
 
         // Initialize zone graphics
         this.zoneGraphics = this.add.graphics();
@@ -1085,13 +1199,17 @@ class RoomEditorScene extends Phaser.Scene {
     private saveRoomConfig() {
         const config: SavedRoomConfig = {
             room: this.currentRoom,
-            items: this.placedItems.map(item => ({
-                name: item.name,
-                x: item.sprite.x,
-                y: item.sprite.y,
-                scaleX: item.sprite.scaleX,
-                scaleY: item.sprite.scaleY
-            }))
+            items: this.placedItems.map(item => {
+                // Ensure the name always includes .png
+                const itemName = item.name.endsWith('.png') ? item.name : `${item.name}.png`;
+                return {
+                    name: itemName,
+                    x: item.sprite.x,
+                    y: item.sprite.y,
+                    scaleX: item.sprite.scaleX,
+                    scaleY: item.sprite.scaleY
+                };
+            })
         };
         
         localStorage.setItem(this.saveKey, JSON.stringify(config));
