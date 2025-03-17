@@ -2,6 +2,7 @@ console.log('GAME MODULE LOADED - ' + Date.now());
 import Phaser from 'phaser';
 import CatScene from './scenes/CatScene';
 import RoomEditorScene from './scenes/RoomEditorScene';
+import CollisionEditorScene from './scenes/CollisionEditorScene';
 
 const config: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
@@ -15,7 +16,7 @@ const config: Phaser.Types.Core.GameConfig = {
             debug: false
         }
     },
-    scene: [CatScene, RoomEditorScene],
+    scene: [CatScene, RoomEditorScene, CollisionEditorScene],
     scale: {
         mode: Phaser.Scale.FIT,
         autoCenter: Phaser.Scale.CENTER_BOTH
