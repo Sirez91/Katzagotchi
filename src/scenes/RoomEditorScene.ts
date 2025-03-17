@@ -50,6 +50,8 @@ class RoomEditorScene extends Phaser.Scene {
     private isDrawingZone: boolean = false;
     private currentZoneType: 'floor' | 'wall' = 'floor';
     private currentZonePoints: Phaser.Math.Vector2[] = [];
+    private selectedPlacedItem: Phaser.GameObjects.Sprite | null = null;
+    private deleteButton: Phaser.GameObjects.Container | null = null;
     private categories: ItemCategory[] = [
         {
             name: 'Beds',
@@ -165,6 +167,14 @@ class RoomEditorScene extends Phaser.Scene {
     }
 
     create() {
+        // Clear any existing placed items to prevent duplicates
+        this.placedItems.forEach(item => {
+            if (item.sprite) {
+                item.sprite.destroy();
+            }
+        });
+        this.placedItems = [];
+
         // Load saved room configuration
         const savedConfig = localStorage.getItem(this.saveKey);
         if (savedConfig) {
@@ -221,11 +231,22 @@ class RoomEditorScene extends Phaser.Scene {
                 sprite.on('dragstart', () => {
                     console.log('Drag started', item.name);
                     sprite.setDepth(100);
+                    
+                    // Remove the deselection during drag
+                    // if (this.selectedPlacedItem === sprite) {
+                    //     this.deselectItem();
+                    // }
                 });
                 
                 sprite.on('drag', (pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
                     sprite.x = dragX;
                     sprite.y = dragY;
+                    
+                    // Move delete button with the item if it's selected
+                    if (this.selectedPlacedItem === sprite && this.deleteButton) {
+                        this.deleteButton.x = dragX + 30;
+                        this.deleteButton.y = dragY - 30;
+                    }
                     
                     // Check if in valid zone
                     const isValid = this.isPointInZone(dragX, dragY, foundCategory.zone, itemInfo?.naturalWall);
@@ -297,14 +318,23 @@ class RoomEditorScene extends Phaser.Scene {
                     }
                 });
                 
-                // Add right-click to remove
+                // Add pointer down for selection
                 sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
                     if (pointer.rightButtonDown()) {
+                        // Right-click to delete
                         const index = this.placedItems.findIndex(i => i.sprite === sprite);
                         if (index !== -1) {
                             this.placedItems.splice(index, 1);
                         }
                         sprite.destroy();
+                        
+                        // Clean up if the deleted item was selected
+                        if (this.selectedPlacedItem === sprite) {
+                            this.deselectItem();
+                        }
+                    } else {
+                        // Left-click to select
+                        this.selectItem(sprite);
                     }
                 });
             });
@@ -614,6 +644,17 @@ class RoomEditorScene extends Phaser.Scene {
                 this.finishCurrentZone();
             }
         });
+
+        // Add deselect when clicking on background
+        this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+            // Check if the pointer hit any interactive game objects
+            const hitObjects = this.input.hitTestPointer(pointer);
+            
+            // Only deselect if no interactive objects were clicked
+            if (hitObjects.length === 0) {
+                this.deselectItem();
+            }
+        });
     }
 
     private defineZones() {
@@ -921,6 +962,12 @@ class RoomEditorScene extends Phaser.Scene {
                                 placedItem.x = dragX;
                                 placedItem.y = dragY;
                                 
+                                // Move delete button with the item if it's selected
+                                if (this.selectedPlacedItem === placedItem && this.deleteButton) {
+                                    this.deleteButton.x = dragX + 30;
+                                    this.deleteButton.y = dragY - 30;
+                                }
+                                
                                 // Visual feedback for valid/invalid zones
                                 const isValid = this.isPointInZone(dragX, dragY, this.selectedItemZone, item.naturalWall);
                                 placedItem.setAlpha(isValid ? 1 : 0.4);
@@ -975,11 +1022,20 @@ class RoomEditorScene extends Phaser.Scene {
                                 }
                             });
 
-                            // Add right-click to remove
+                            // Add pointer down for selection
                             placedItem.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
                                 if (pointer.rightButtonDown()) {
+                                    // Right-click to remove
                                     placedItem.destroy();
                                     this.placedItems = this.placedItems.filter(i => i.sprite !== placedItem);
+                                    
+                                    // Clean up if the deleted item was selected
+                                    if (this.selectedPlacedItem === placedItem) {
+                                        this.deselectItem();
+                                    }
+                                } else {
+                                    // Left-click to select
+                                    this.selectItem(placedItem);
                                 }
                             });
                         } else if (!isInValidZone && isOutsideCatalog) {
@@ -1215,6 +1271,83 @@ class RoomEditorScene extends Phaser.Scene {
         localStorage.setItem(this.saveKey, JSON.stringify(config));
     }
 
+    private selectItem(sprite: Phaser.GameObjects.Sprite) {
+        // Clear any previous selection
+        this.deselectItem();
+        
+        // Set the selected item and highlight it
+        this.selectedPlacedItem = sprite;
+        sprite.setTint(0xffff00); // Yellow highlight
+        
+        // Create delete button
+        const buttonX = sprite.x + 30;
+        const buttonY = sprite.y - 30;
+        
+        // Create a container for the button
+        this.deleteButton = this.add.container(buttonX, buttonY);
+        
+        // Create the red circle background
+        const circle = this.add.circle(0, 0, 18, 0xff0000); // Red circle
+        
+        // Create white X
+        const xText = this.add.text(0, 0, 'X', {
+            fontSize: '18px',
+            color: '#ffffff', // White text
+            fontStyle: 'bold'
+        }).setOrigin(0.5);
+        
+        // Add components to the button container
+        this.deleteButton.add([circle, xText]);
+        
+        // Make the button interactive
+        circle.setInteractive({ useHandCursor: true });
+        
+        // Add delete functionality
+        circle.on('pointerdown', () => {
+            if (this.selectedPlacedItem) {
+                // Find and remove the item from the placedItems array
+                const index = this.placedItems.findIndex(item => item.sprite === this.selectedPlacedItem);
+                if (index !== -1) {
+                    this.placedItems.splice(index, 1);
+                }
+                
+                // Destroy the sprite
+                this.selectedPlacedItem.destroy();
+                
+                // Clean up
+                this.deselectItem();
+            }
+        });
+        
+        // Add hover effects
+        circle.on('pointerover', () => {
+            circle.setFillStyle(0xff3333); // Lighter red on hover
+            circle.setScale(1.1); // Slightly bigger
+        });
+        
+        circle.on('pointerout', () => {
+            circle.setFillStyle(0xff0000); // Back to normal red
+            circle.setScale(1.0); // Normal size
+        });
+        
+        // Set depth to ensure it's visible - use a very high value
+        this.deleteButton.setDepth(1000);
+    }
+    
+    private deselectItem() {
+        // Clear highlighting on previously selected item
+        if (this.selectedPlacedItem) {
+            this.selectedPlacedItem.clearTint();
+            this.selectedPlacedItem = null;
+        }
+        
+        // Remove the delete button if it exists
+        if (this.deleteButton) {
+            this.deleteButton.destroy();
+            this.deleteButton = null;
+        }
+    }
+
     private setupPlacedItemHandlers(sprite: Phaser.GameObjects.Sprite, itemName: string) {
         // Find the category and item info
         let itemCategory: ItemCategory | undefined;
@@ -1240,6 +1373,12 @@ class RoomEditorScene extends Phaser.Scene {
         sprite.on('drag', (pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
             sprite.x = dragX;
             sprite.y = dragY;
+            
+            // Move delete button with the item if it's selected
+            if (this.selectedPlacedItem === sprite && this.deleteButton) {
+                this.deleteButton.x = dragX + 30;
+                this.deleteButton.y = dragY - 30;
+            }
             
             // Visual feedback for valid/invalid zones
             const isValid = this.isPointInZone(dragX, dragY, itemCategory!.zone, itemInfo!.naturalWall);
@@ -1295,11 +1434,20 @@ class RoomEditorScene extends Phaser.Scene {
             }
         });
 
-        // Add right-click to remove
+        // Add click to select and right-click to remove
         sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
             if (pointer.rightButtonDown()) {
+                // Right-click to remove
                 sprite.destroy();
                 this.placedItems = this.placedItems.filter(i => i.sprite !== sprite);
+                
+                // Clean up if the deleted item was selected
+                if (this.selectedPlacedItem === sprite) {
+                    this.deselectItem();
+                }
+            } else {
+                // Left-click to select
+                this.selectItem(sprite);
             }
         });
     }
